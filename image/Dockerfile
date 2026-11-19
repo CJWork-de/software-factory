@@ -36,6 +36,9 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION"
 # Python-Projekte: uv (verwaltet Python-Versionen und Pakete selbst)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH=/home/pwuser/.local/bin:$PATH
+# Gängige Python-Version vorab laden, damit nicht jeder Job sie neu herunterlädt.
+# Projekte mit anderer Version (.python-version) holt uv weiterhin selbst.
+RUN uv python install 3.13
 
 WORKDIR /work
 ENTRYPOINT ["/factory/entrypoint.sh"]

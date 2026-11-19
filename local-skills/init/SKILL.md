@@ -35,7 +35,10 @@ Cover through natural conversation:
 Resolve before the feature map. Ask what the product must run on (web app, API, mobile, CLI, data pipeline) and **recommend a concrete stack based on the briefing**, with one sentence why. Respect anything the briefing prescribes (e.g. "the client runs PHP/Laravel").
 - Typical recommendation for web apps with accounts and data: Next.js + TypeScript + Tailwind + shadcn/ui, Supabase (database + login), Vitest + Playwright.
 - Without accounts or shared data: no backend, local storage.
-- Any other stack is equally fine (Python/FastAPI, Laravel, Rails, SvelteKit, Go …).
+- Tools that process documents or data on a server and are used through the browser (upload, check, report), especially where the result depends on legal lists or model calls: Python + uv + FastAPI, pytest, delivered as a Linux container. Stack packs: `python`, plus `regelwerksdaten` if the app relies on official lists, limits or catalogues, plus `llm-anbindung` if the app itself calls language models.
+- Any other stack is equally fine (Laravel, Rails, SvelteKit, Go …).
+
+Stack packs that exist in the Software Factory: `nextjs`, `supabase`, `python`, `regelwerksdaten`, `llm-anbindung`.
 
 Resolve with the user: language/runtime, framework, UI, data storage, login, tests, package manager, hosting.
 
