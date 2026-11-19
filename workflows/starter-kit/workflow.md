@@ -36,7 +36,7 @@ features/
   - Schritt **Tests** → Skill `qa` → `qa-report.md`
   - Ergebnis: Pull Request → **Abnahme**
 - **Abnahme** (eigener Lauf, neuer Agent, entwickelt nichts)
-  - Kennt nur Spec, Testszenarien und den PR-Branch. Startet die App und testet jedes Szenario im Browser.
+  - Kennt nur Spec, Testszenarien und den PR-Branch. Liest den vollständigen Diff (Code-Durchsicht: Richtigkeit, Sicherheit, abgeschwächte Prüfungen, Abhängigkeiten), startet die App und testet jedes Szenario selbst (Web-Oberfläche im Browser, sonst über echte Aufrufe).
   - Bestanden → **Review**. Nicht bestanden → Befunde zurück in die Entwicklung (max. 2 Runden, danach Review mit „Bitte genau prüfen")
 
 ## Status auf dem Board

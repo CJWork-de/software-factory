@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync, lstat
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  buildPrompt, caddyConfig, humanCommentsSinceFactory, lastFactoryMarker, readJobFile, redact,
+  buildPrompt, caddyConfig, humanCommentsSinceFactory, lastFactoryMarker, protectedChange, readJobFile, redact,
   reworksSinceApproval, setFactoryLogin, writeJobFile, type Config,
 } from "./main.ts";
 
@@ -150,17 +150,23 @@ import { finish } from "./main.ts";
 type Call = { cmd: string[]; stdin: string };
 const calls: Call[] = [];
 let headSha = "abc1234";
+/** Was `gh pr diff --name-only` liefert; `null` = der Aufruf schlägt fehl. */
+let prFiles: string | null = "src/app/page.tsx\n";
+/** Was `gh pr list` liefert (offene PRs zum Branch). */
+let openPrs = "[]";
 (globalThis as any).Bun = {
   spawn(cmd: string[], opts: any) {
     const call: Call = { cmd, stdin: "" };
     calls.push(call);
     let out = "";
+    let code = 0;
     if (cmd[0] === "gh" && cmd[1] === "issue" && cmd[2] === "view") out = JSON.stringify(issue([]));
     if (cmd[0] === "gh" && cmd[1] === "api" && String(cmd[2]).includes("/git/ref/heads/")) out = headSha + "\n";
-    if (cmd[0] === "gh" && cmd[1] === "pr" && cmd[2] === "diff") out = "src/app/page.tsx\n";
+    if (cmd[0] === "gh" && cmd[1] === "pr" && cmd[2] === "list") out = openPrs;
+    if (cmd[0] === "gh" && cmd[1] === "pr" && cmd[2] === "diff") { if (prFiles === null) code = 1; else out = prFiles; }
     return {
       stdout: new Blob([out]).stream(), stderr: new Blob([""]).stream(), kill() {},
-      exited: (async () => { if (opts.stdin instanceof Blob) call.stdin = await opts.stdin.text(); return 0; })(),
+      exited: (async () => { if (opts.stdin instanceof Blob) call.stdin = await opts.stdin.text(); return code; })(),
     };
   },
 };
@@ -196,6 +202,69 @@ test("Bau mit grünen Checks auf dem gepushten Commit geht in die Abnahme", asyn
   const r = await finishRun("build", { "status.json": '{"status":"accepting","pr":"https://x/pull/1"}', "verify.json": verify, "claude.jsonl": result() });
   assert.equal(r.metric.status, "accepting");
   assert.equal(r.failedComment, "");
+});
+
+// ---------- Dateien, die nur der Mensch ändern darf ----------
+
+test("protectedChange: Spec, .factory/ und .github/ sind geschützt, normaler Code nicht", () => {
+  assert.equal(protectedChange(["src/app/page.tsx", "e2e/a.spec.ts", "features/PROJ-1-x/design.md", ""]), null);
+  assert.ok(protectedChange(["src/a.ts", "features/PROJ-1-x/spec.md"])?.includes("Spec"));
+  assert.ok(protectedChange([".factory/setup.json"])?.includes(".factory/"));
+  assert.ok(protectedChange([" .factory/Dockerfile "])?.includes(".factory/"));
+  assert.ok(protectedChange(["./.factory/setup.json"])?.includes(".factory/"));
+  assert.ok(protectedChange([".github/workflows/ci.yml"])?.includes(".github/"));
+  // Ähnlich klingende Pfade außerhalb der geschützten Ordner bleiben erlaubt
+  assert.equal(protectedChange(["src/.factory/x.ts", "docs/.github/y.md", "features/spec.md"]), null);
+});
+
+const greenBuild = (status = '{"status":"accepting","pr":"https://x/pull/1"}') => ({
+  "status.json": status,
+  "verify.json": JSON.stringify({ sha: headSha, ok: true, results: [{ name: "lint", exit: 0 }] }),
+  "claude.jsonl": result(),
+});
+
+test("Bau, der die Pflicht-Checks verändert, gilt nicht als gebaut", async () => {
+  prFiles = "src/app/page.tsx\n.factory/setup.json\n";
+  try {
+    const r = await finishRun("build", greenBuild());
+    assert.equal(r.metric.status, "failed");
+    assert.ok(r.failedComment.includes(".factory/setup.json"));
+  } finally { prFiles = "src/app/page.tsx\n"; }
+});
+
+test("Bau, der die CI verändert, gilt nicht als gebaut", async () => {
+  prFiles = ".github/workflows/ci.yml\n";
+  try {
+    const r = await finishRun("build", greenBuild());
+    assert.equal(r.metric.status, "failed");
+    assert.ok(r.failedComment.includes(".github/"));
+  } finally { prFiles = "src/app/page.tsx\n"; }
+});
+
+test("Lässt sich die Dateiliste des PRs nicht lesen, gilt der Bau nicht als gebaut", async () => {
+  prFiles = null;
+  try {
+    const r = await finishRun("build", greenBuild());
+    assert.equal(r.metric.status, "failed");
+    assert.ok(r.failedComment.includes("ließen sich nicht lesen"));
+  } finally { prFiles = "src/app/page.tsx\n"; }
+});
+
+test("Bau ohne gemeldeten und ohne offenen PR gilt nicht als gebaut", async () => {
+  const r = await finishRun("build", greenBuild('{"status":"accepting"}'));
+  assert.equal(r.metric.status, "failed");
+  assert.ok(r.failedComment.includes("keinen offenen Pull Request"));
+});
+
+test("Bau ohne gemeldete PR-URL: der Runner findet den offenen PR und prüft ihn", async () => {
+  openPrs = JSON.stringify([{ number: 1, url: "https://x/pull/1", state: "OPEN" }]);
+  try {
+    const ok = await finishRun("build", greenBuild('{"status":"accepting"}'));
+    assert.equal(ok.metric.status, "accepting");
+    prFiles = ".factory/setup.json\n";
+    const blocked = await finishRun("build", greenBuild('{"status":"accepting"}'));
+    assert.equal(blocked.metric.status, "failed");
+  } finally { openPrs = "[]"; prFiles = "src/app/page.tsx\n"; }
 });
 
 test("Abnahme mit gemeldetem Erfolg, aber CLI-Fehler zählt als Fehlschlag", async () => {

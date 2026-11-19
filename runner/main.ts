@@ -385,7 +385,21 @@ async function launch(cfg: Config, repo: string, issue: Issue, phase: Phase, mod
   log("job:started", { repo, issue: issue.number, phase, mode, container: name });
 }
 
-/** Nach einem Bau-Lauf: Sind die Pflicht-Checks auf genau dem gepushten Stand grün und ist die Spec unverändert? */
+/**
+ * Dateien, die nur der Mensch ändern darf: die Spec (der Vertrag), die Pflicht-Checks samt Job-Image
+ * (`.factory/`) und die CI (`.github/`). Liefert den Grund für die Ablehnung oder null.
+ */
+export function protectedChange(files: string[]): string | null {
+  for (const raw of files) {
+    const f = raw.trim().replace(/^\.\//, "");
+    if (/^features\/[^/]+\/spec\.md$/.test(f)) return `Der Pull Request ändert die Spec \`${f}\`. Die Spec ist der Vertrag und darf nur vom Menschen geändert werden.`;
+    if (/^\.factory\//.test(f)) return `Der Pull Request ändert \`${f}\`. Die Pflicht-Checks und das Job-Image unter \`.factory/\` legt nur der Mensch fest. Ist eine Änderung nötig, stelle eine Rückfrage.`;
+    if (/^\.github\//.test(f)) return `Der Pull Request ändert \`${f}\`. Dateien unter \`.github/\` (CI, Workflows) darf nur der Mensch ändern. Ist eine Änderung nötig, stelle eine Rückfrage.`;
+  }
+  return null;
+}
+
+/** Nach einem Bau-Lauf: Sind die Pflicht-Checks auf genau dem gepushten Stand grün und sind Spec, Checks und CI unverändert? */
 async function checkBuild(repo: string, issue: number, dir: string, prUrl?: string): Promise<string | null> {
   const verify = readJobJson(join(dir, "verify.json"));
   if (!verify || verify.ok !== true || !Array.isArray(verify.results) || verify.results.length === 0) {
@@ -395,14 +409,15 @@ async function checkBuild(repo: string, issue: number, dir: string, prUrl?: stri
   try { head = (await gh(["api", `repos/${repo}/git/ref/heads/factory/${issue}`, "--jq", ".object.sha"])).trim(); } catch {}
   if (!head) return `Der Branch \`factory/${issue}\` wurde nicht gepusht.`;
   if (verify.sha !== head) return `Die Checks liefen auf \`${String(verify.sha).slice(0, 7)}\`, gepusht ist aber \`${head.slice(0, 7)}\`. Nach dem letzten Commit muss \`factory-verify\` erneut laufen.`;
-  if (prUrl) {
-    try {
-      const files = (await gh(["pr", "diff", prUrl, "--name-only"])).split("\n");
-      const spec = files.find((f) => /^features\/[^/]+\/spec\.md$/.test(f.trim()));
-      if (spec) return `Der Pull Request ändert die Spec \`${spec.trim()}\`. Die Spec ist der Vertrag und darf nur vom Menschen geändert werden.`;
-    } catch {}
-  }
-  return null;
+  // Der Agent meldet die PR-URL selbst. Fehlt sie, sucht der Runner den PR zum Branch, damit die Prüfung nicht entfällt.
+  let pr = prUrl;
+  if (!pr) { try { pr = (await findPr(repo, issue, "open"))?.url; } catch {} }
+  if (!pr) return `Zum Branch \`factory/${issue}\` gibt es keinen offenen Pull Request.`;
+  // Lässt sich die Dateiliste nicht lesen, gilt der Bau nicht als abgeschlossen (lieber ein erneuter Versuch als eine übersprungene Prüfung).
+  let files: string[] | null = null;
+  try { files = (await gh(["pr", "diff", pr, "--name-only"])).split("\n"); } catch {}
+  if (!files) return "Die geänderten Dateien des Pull Requests ließen sich nicht lesen. Ohne diese Prüfung gilt der Bau nicht als abgeschlossen.";
+  return protectedChange(files);
 }
 
 /** Wertet einen beendeten Container aus und räumt ihn weg. `reason` = Grund, warum der Runner ihn beendet hat. */
